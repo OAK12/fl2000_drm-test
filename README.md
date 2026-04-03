@@ -39,12 +39,14 @@ Este repositorio incluye un script de instalación automatizada (`install-driver
 ### Características del Instalador
 
 - ✅ Verificación automática de dependencias
+- ✅ **Detección y corrección automática de problemas con headers DRM** (nuevo en kernels 6.8+)
 - ✅ Compilación del driver para tu kernel actual
 - ✅ Creación de paquete `.deb` para fácil instalación/desinstalación
 - ✅ Integración con DKMS para reconstrucción automática tras actualizaciones del kernel
 - ✅ Configuración de carga automática de módulos
 - ✅ Creación de reglas udev para detección de dispositivos
 - ✅ Limpieza de archivos temporales
+- ✅ Detección de incompatibilidades de versión de GCC
 
 ### Requisitos Previos
 
@@ -104,11 +106,20 @@ El instalador es **compatible con Pop!_OS 24.04 LTS**, pero existen consideracio
    
    **Solución**: El paquete `.deb` creado incluye configuración DKMS que automáticamente reconstruye los módulos cuando se instala un nuevo kernel.
 
-5. **Dependencias de DRM**
+5. **Dependencias de DRM - ¡CORREGIDO AUTOMÁTICAMENTE!**
    
-   **Problema**: Las versiones recientes del kernel pueden tener cambios en las APIs de DRM.
+   **Problema**: Las versiones recientes del kernel (6.8+) pueden tener cambios en las APIs de DRM, causando errores como:
+   ```
+   fatal error: drm/drm_fbdev_generic.h: No such file or directory
+   ```
    
-   **Solución**: 
+   **Solución Automática**: El instalador ahora detecta y corrige este problema automáticamente:
+   - Busca headers alternativos (`drm_fbdev_common.h`, `drm_fb_helper.h`)
+   - Crea una copia de seguridad del archivo original
+   - Parchea el código para usar el header disponible
+   - Restaura el archivo original después de la compilación
+   
+   **Solución Manual** (si es necesaria):
    ```bash
    # Cargar manualmente las dependencias si es necesario
    sudo modprobe drm
