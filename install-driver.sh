@@ -45,7 +45,7 @@ check_dependencies() {
     local missing_deps=()
     
     # Paquetes necesarios para compilación
-    for pkg in make gcc linux-headers-$(uname -r) dkms devscripts build-essential fakeroot; do
+    for pkg in make gcc linux-headers-$(uname -r) dkms devscripts build-essential fakeroot libdrm-dev; do
         if ! dpkg -l | grep -q "^ii  $pkg "; then
             missing_deps+=("$pkg")
         fi
@@ -63,6 +63,66 @@ check_dependencies() {
     fi
 }
 
+# Verificar y corregir problemas de headers DRM
+fix_drm_headers() {
+    log_info "Verifying DRM headers compatibility..."
+    
+    local HEADERS_DIR="/lib/modules/$(uname -r)/build/include/drm"
+    local FL2000_H="${WORK_DIR}/fl2000.h"
+    local COMPATIBILITY_FIXED=false
+    
+    # Check if the problematic header exists
+    if [ ! -f "${HEADERS_DIR}/drm_fbdev_generic.h" ]; then
+        log_warn "drm_fbdev_generic.h not found in kernel headers"
+        
+        # Look for alternative header names
+        local alternative_header=""
+        if [ -f "${HEADERS_DIR}/drm_fbdev_common.h" ]; then
+            alternative_header="drm_fbdev_common.h"
+        elif [ -f "${HEADERS_DIR}/drm_fb_helper.h" ]; then
+            # In newer kernels, the functionality might be in drm_fb_helper.h
+            alternative_header="drm_fb_helper.h"
+        fi
+        
+        if [ -n "$alternative_header" ]; then
+            log_info "Found alternative header: $alternative_header"
+            log_info "Patching fl2000.h to use $alternative_header..."
+            
+            # Create a backup
+            cp "${FL2000_H}" "${FL2000_H}.backup"
+            
+            # Replace the include line
+            sed -i 's|#include <drm/drm_fbdev_generic.h>|#include <drm/'"${alternative_header}"'|' "${FL2000_H}"
+            
+            COMPATIBILITY_FIXED=true
+            log_info "Header compatibility issue fixed automatically"
+        else
+            log_error "No alternative DRM header found. Installation may fail."
+            log_info "Try installing linux-source package: sudo apt install linux-source"
+        fi
+    else
+        log_info "DRM headers are compatible (drm_fbdev_generic.h found)"
+    fi
+    
+    # Additional check: verify GCC version compatibility
+    local KERNEL_GCC=$(cat /proc/version | grep -oP 'gcc version \K[0-9.]+' | head -1)
+    local SYSTEM_GCC=$(gcc --version | head -1 | grep -oP '[0-9.]+' | head -1)
+    
+    if [ -n "$KERNEL_GCC" ] && [ -n "$SYSTEM_GCC" ]; then
+        local KERNEL_GCC_MAJOR=$(echo $KERNEL_GCC | cut -d. -f1)
+        local SYSTEM_GCC_MAJOR=$(echo $SYSTEM_GCC | cut -d. -f1)
+        
+        if [ "$KERNEL_GCC_MAJOR" != "$SYSTEM_GCC_MAJOR" ]; then
+            log_warn "GCC version mismatch detected:"
+            log_warn "  Kernel built with: GCC ${KERNEL_GCC}"
+            log_warn "  System GCC: ${SYSTEM_GCC}"
+            log_warn "This may cause compilation warnings but should still work."
+        fi
+    fi
+    
+    return 0
+}
+
 # Limpiar directorios temporales
 cleanup() {
     log_info "Limpiando directorios temporales..."
@@ -76,6 +136,12 @@ cleanup() {
     rm -f "${WORK_DIR}"/*.ur-safe
     rm -rf "${WORK_DIR}"/.tmp_versions
     rm -rf "${WORK_DIR}"/Module.symvers
+    
+    # Restore original fl2000.h if backup exists (from fix_drm_headers)
+    if [ -f "${WORK_DIR}/fl2000.h.backup" ]; then
+        log_info "Restoring original fl2000.h from backup..."
+        mv "${WORK_DIR}/fl2000.h.backup" "${WORK_DIR}/fl2000.h"
+    fi
 }
 
 # Compilar el driver
@@ -321,6 +387,7 @@ main() {
     
     check_root
     check_dependencies
+    fix_drm_headers
     cleanup
     compile_driver
     create_deb_structure
